@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3f2ed">
+  <title>听声鉴宝 · 移动录音验证</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f3f2ed;
+      --ink: #202721;
+      --muted: #6f766f;
+      --line: #d8d9d1;
+      --green: #376b4b;
+      --green-dark: #244a34;
+      --red: #bd493d;
+      --gold: #b18436;
+      --white: #fffefa;
+      --radius: 5px;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, transparent 0 23px, rgba(48, 64, 48, .035) 24px, transparent 25px),
+        var(--paper);
+      font-family: "Trebuchet MS", "Microsoft YaHei", sans-serif;
+    }
+    button, select { font: inherit; }
+    .app {
+      width: min(100%, 760px);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: max(22px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom));
+    }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 0 17px;
+      border-bottom: 1px solid var(--line);
+    }
+    .wordmark { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .edition { color: var(--muted); font-size: 11px; }
+    .intro { padding: 27px 0 19px; }
+    .eyebrow { color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .16em; }
+    h1 {
+      margin: 7px 0 8px;
+      font-family: Georgia, "Noto Serif SC", "Songti SC", serif;
+      font-size: clamp(30px, 9vw, 44px);
+      font-weight: 600;
+      line-height: 1.1;
+    }
+    .intro p { max-width: 34em; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    .record-panel {
+      position: relative;
+      overflow: hidden;
+      padding: 22px;
+      border: 1px solid #cfd4ca;
+      border-radius: var(--radius);
+      background: var(--white);
+    }
+    .panel-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .panel-title { font-size: 12px; font-weight: 800; letter-spacing: .08em; }
+    .live-state { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+    .led { width: 8px; height: 8px; border-radius: 50%; background: #a6aaa2; }
+    .live-state[data-state="recording"] .led { background: var(--red); box-shadow: 0 0 0 4px rgba(189,73,61,.12); }
+    .live-state[data-state="ready"] .led { background: var(--green); }
+    .rec-row { display: grid; grid-template-columns: 86px 1fr; align-items: center; gap: 17px; margin: 22px 0 19px; }
+    .record-button {
+      display: grid;
+      place-items: center;
+      width: 86px;
+      height: 86px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      color: white;
+      background: var(--green);
+      box-shadow: inset 0 0 0 7px rgba(255,255,255,.13), 0 5px 0 var(--green-dark);
+      cursor: pointer;
+      transition: transform .15s, background .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .record-button:active { transform: translateY(3px); box-shadow: inset 0 0 0 7px rgba(255,255,255,.13), 0 2px 0 var(--green-dark); }
+    .record-button:disabled { opacity: .55; cursor: wait; }
+    .record-button svg { width: 27px; height: 27px; }
+    .record-copy strong { display: block; margin-bottom: 5px; font-size: 17px; }
+    .record-copy span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .meter-head { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+    .meter { height: 8px; overflow: hidden; border-radius: 2px; background: #e7e8e1; }
+    .meter-fill { width: 0; height: 100%; background: var(--green); transition: width .12s linear; }
+    .meter-fill.hot { background: var(--red); }
+    .record-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+    .message { min-height: 21px; margin: 15px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .message[data-kind="error"] { color: #a4362b; }
+    .message[data-kind="success"] { color: var(--green); }
+    .device-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 9px; margin-top: 16px; }
+    .device-row label { color: var(--muted); font-size: 11px; }
+    select {
+      width: 100%; min-width: 0; padding: 10px 34px 10px 11px;
+      border: 1px solid var(--line); border-radius: 3px; color: var(--ink); background: #fbfbf7;
+      font-size: 12px;
+    }
+    .refresh-button, .download-button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 3px;
+      color: var(--ink); background: transparent; font-size: 12px; cursor: pointer;
+    }
+    .refresh-button svg, .download-button svg { width: 15px; height: 15px; }
+    .section-head { display: flex; align-items: end; justify-content: space-between; margin: 25px 0 10px; }
+    .section-head h2 { margin: 0; font-family: Georgia, "Noto Serif SC", "Songti SC", serif; font-size: 19px; font-weight: 600; }
+    .section-head span { color: var(--muted); font-size: 11px; }
+    .result {
+      padding: 17px;
+      border-top: 2px solid var(--gold);
+      background: rgba(255,254,250,.62);
+    }
+    .result-empty { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .result-mark { display: grid; flex: 0 0 34px; place-items: center; width: 34px; height: 34px; border: 1px solid #d8c79f; border-radius: 50%; color: var(--gold); font-family: Georgia, serif; font-size: 18px; }
+    .filter-head { margin-top: 25px; }
+    .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .filter-field { display: grid; gap: 6px; }
+    .filter-field label { color: var(--muted); font-size: 11px; }
+    .items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 13px 0 0; padding: 0; list-style: none; }
+    .item { display: flex; align-items: center; justify-content: space-between; min-height: 42px; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); background: rgba(255,254,250,.66); font-size: 12px; }
+    .quality { flex: 0 0 auto; font-size: 10px; font-weight: 700; }
+    .quality.red { color: #bc4038; }
+    .quality.gold { color: #a77b2d; }
+    .quality.purple { color: #79509a; }
+    .empty-list { grid-column: 1 / -1; padding: 16px 4px; color: var(--muted); font-size: 12px; }
+    .bottom-note { margin: 23px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.6; }
+    @media (min-width: 600px) {
+      .app { padding-right: 28px; padding-left: 28px; }
+      .record-panel { padding: 25px 28px; }
+      .items { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="masthead">
+      <div class="wordmark">FIELD NOTES · AUDIO</div>
+      <div class="edition">移动端原型 / 01</div>
+    </header>
+
+    <section class="intro" aria-labelledby="page-title">
+      <div class="eyebrow">暗区突围无限</div>
+      <h1 id="page-title">听声鉴宝</h1>
+      <p>接入外置声卡，录制拾取声。先验证手机浏览器的录音输入与信号质量。</p>
+    </section>
+
+    <section class="record-panel" aria-labelledby="record-title">
+      <div class="panel-top">
+        <div class="panel-title" id="record-title">输入检查</div>
+        <div class="live-state" id="live-state" data-state="idle"><span class="led"></span><span id="state-label">待机</span></div>
+      </div>
+      <div class="rec-row">
+        <button class="record-button" id="record-button" type="button" aria-label="录制五秒音频">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>
+        </button>
+        <div class="record-copy">
+          <strong id="record-title-text">录制 5 秒</strong>
+          <span id="record-subtitle">点击开始，自动结束。请确认 USB 声卡已连接。</span>
+        </div>
+      </div>
+      <div class="meter-head"><span>输入电平</span><span id="level-value">峰值 -- dBFS</span></div>
+      <div class="meter" role="meter" aria-label="实时音频电平" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
+      <div class="record-footer"><span id="elapsed">尚无录音</span><span id="sample-rate">采样率 --</span></div>
+      <p class="message" id="message" role="status" aria-live="polite">录音需由用户点击启动，并在浏览器允许麦克风访问。</p>
+      <div class="device-row">
+        <div>
+          <label for="input-device">录音输入</label>
+          <select id="input-device" aria-label="选择录音输入设备"><option value="">系统默认输入</option></select>
+        </div>
+        <button class="refresh-button" id="refresh-devices" type="button" aria-label="刷新录音设备" title="刷新录音设备">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg>
+        </button>
+      </div>
+      <button class="download-button" id="download-recording" type="button" hidden style="margin-top:12px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>
+        导出最近录音 WAV
+      </button>
+    </section>
+
+    <div class="section-head">
+      <h2>识别结果</h2>
+      <span>离线分类核心尚未接入</span>
+    </div>
+    <section class="result" aria-live="polite">
+      <div class="result-empty"><span class="result-mark">—</span><span>录音链路验证完成后，将在此显示声音类别与置信度。</span></div>
+    </section>
+
+    <div class="section-head filter-head">
+      <h2>候选物品</h2>
+      <span id="item-count">等待筛选数据</span>
+    </div>
+    <div class="filters">
+      <div class="filter-field"><label for="type-filter">物品类别</label><select id="type-filter" disabled><option>筛选数据接入中</option></select></div>
+      <div class="filter-field"><label for="format-filter">占用格式</label><select id="format-filter" disabled><option>筛选数据接入中</option></select></div>
+    </div>
+    <ul class="items" id="items"><li class="empty-list">候选物品映射会在下一阶段接入。</li></ul>
+    <p class="bottom-note">本地录音原始数据仅在本页内存处理；使用导出按钮时才会下载 WAV。当前原型不上传音频，也不会给出模拟识别结果。</p>
+  </main>
+
+  <script>
+    (() => {
+      const RECORD_SECONDS = 5;
+      const button = document.querySelector('#record-button');
+      const state = document.querySelector('#live-state');
+      const stateLabel = document.querySelector('#state-label');
+      const title = document.querySelector('#record-title-text');
+      const subtitle = document.querySelector('#record-subtitle');
+      const message = document.querySelector('#message');
+      const meter = document.querySelector('#meter-fill');
+      const meterTrack = document.querySelector('.meter');
+      const levelValue = document.querySelector('#level-value');
+      const elapsed = document.querySelector('#elapsed');
+      const sampleRateLabel = document.querySelector('#sample-rate');
+      const inputDevice = document.querySelector('#input-device');
+      const downloadButton = document.querySelector('#download-recording');
+      let activeStream = null;
+      let audioContext = null;
+      let processor = null;
+      let source = null;
+      let silentGain = null;
+      let chunks = [];
+      let lastRecording = null;
+      let recordingStartedAt = 0;
+      let finishTimer = 0;
+      let meterTimer = 0;
+      let maxPeak = 0;
+      let lastRms = 0;
+      let activeSampleRate = 0;
+
+      function setMessage(text, kind = '') {
+        message.textContent = text;
+        message.dataset.kind = kind;
+      }
+
+      function setState(value, label) {
+        state.dataset.state = value;
+        stateLabel.textContent = label;
+      }
+
+      function describeError(error) {
+        const descriptions = {
+          NotAllowedError: '麦克风权限被拒绝。请在浏览器站点/文件权限中允许麦克风后重试。',
+          NotFoundError: '浏览器未找到可用的录音输入设备。',
+          NotReadableError: '录音设备被占用或系统无法读取，请断开并重新连接声卡。',
+          OverconstrainedError: '所选输入设备当前不可用，请刷新设备列表后重试。',
+          SecurityError: '当前打开方式不允许麦克风访问。请改用支持麦克风的浏览器打开本地文件。'
+        };
+        return descriptions[error.name] || `录音启动失败：${error.message || error.name || '未知错误'}`;
+      }
+
+      async function refreshDevices() {
+        if (!navigator.mediaDevices?.enumerateDevices) {
+          setMessage('此浏览器未提供媒体设备 API。', 'error');
+          return;
+        }
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const current = inputDevice.value;
+          const inputs = devices.filter(device => device.kind === 'audioinput');
+          inputDevice.replaceChildren(new Option('系统默认输入', ''));
+          for (const [index, device] of inputs.entries()) {
+            const label = device.label || `录音输入 ${index + 1}`;
+            inputDevice.add(new Option(label, device.deviceId));
+          }
+          if ([...inputDevice.options].some(option => option.value === current)) inputDevice.value = current;
+          if (!inputs.length) setMessage('暂未列出录音设备；首次授权麦克风后再刷新。');
+        } catch (error) {
+          setMessage(describeError(error), 'error');
+        }
+      }
+
+      function updateMeter() {
+        const db = lastRms > 0 ? 20 * Math.log10(lastRms) : -100;
+        const percent = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+        meter.style.width = `${percent}%`;
+        meter.classList.toggle('hot', maxPeak > 0.985);
+        levelValue.textContent = `峰值 ${(maxPeak > 0 ? 20 * Math.log10(maxPeak) : -100).toFixed(0)} dBFS`;
+        meterTrack.setAttribute('aria-valuenow', String(Math.round(percent)));
+        const secondsLeft = Math.max(0, RECORD_SECONDS - (performance.now() - recordingStartedAt) / 1000);
+        elapsed.textContent = `剩余 ${secondsLeft.toFixed(1)} 秒`;
+      }
+
+      function collectAudio(event) {
+        const input = event.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(input);
+        chunks.push(copy);
+        let sum = 0;
+        let peak = 0;
+        for (let i = 0; i < input.length; i += 1) {
+          const sample = input[i];
+          sum += sample * sample;
+          peak = Math.max(peak, Math.abs(sample));
+        }
+        lastRms = Math.sqrt(sum / input.length);
+        maxPeak = Math.max(maxPeak, peak);
+      }
+
+      function makeWav(parts, sampleRate) {
+        const sampleCount = parts.reduce((total, part) => total + part.length, 0);
+        const buffer = new ArrayBuffer(44 + sampleCount * 2);
+        const view = new DataView(buffer);
+        const writeText = (offset, text) => [...text].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
+        writeText(0, 'RIFF');
+        view.setUint32(4, 36 + sampleCount * 2, true);
+        writeText(8, 'WAVE');
+        writeText(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeText(36, 'data');
+        view.setUint32(40, sampleCount * 2, true);
+        let offset = 44;
+        for (const part of parts) {
+          for (const sample of part) {
+            const clipped = Math.max(-1, Math.min(1, sample));
+            view.setInt16(offset, clipped < 0 ? clipped * 32768 : clipped * 32767, true);
+            offset += 2;
+          }
+        }
+        return new Blob([buffer], { type: 'audio/wav' });
+      }
+
+      async function stopRecording(success) {
+        window.clearTimeout(finishTimer);
+        window.clearInterval(meterTimer);
+        if (processor) processor.onaudioprocess = null;
+        for (const node of [processor, source, silentGain]) {
+          try { node?.disconnect(); } catch {}
+        }
+        processor = null;
+        source = null;
+        silentGain = null;
+        activeStream?.getTracks().forEach(track => track.stop());
+        activeStream = null;
+        if (audioContext && audioContext.state !== 'closed') await audioContext.close().catch(() => {});
+        audioContext = null;
+        if (success && chunks.length) {
+          lastRecording = makeWav(chunks, activeSampleRate);
+          downloadButton.hidden = false;
+          elapsed.textContent = `已录制 ${((performance.now() - recordingStartedAt) / 1000).toFixed(1)} 秒`;
+          setState('ready', '录音完成');
+          title.textContent = '录音已就绪';
+          subtitle.textContent = `峰值 ${maxPeak > 0 ? (20 * Math.log10(maxPeak)).toFixed(1) : '-∞'} dBFS · 可导出为 WAV`;
+          setMessage(maxPeak < 0.0001 ? '录音数据接近静音。请检查声卡输出、电缆连接和输入路由。' : maxPeak > 0.985 ? '检测到明显削波。请降低外部设备输出音量后重录。' : '已捕获 PCM 音频。可导出 WAV 供后续识别算法对照。', maxPeak < 0.0001 || maxPeak > 0.985 ? 'error' : 'success');
+        } else {
+          setState('idle', '待机');
+          title.textContent = '录制 5 秒';
+          subtitle.textContent = '点击开始，自动结束。请确认 USB 声卡已连接。';
+        }
+        button.disabled = false;
+        await refreshDevices();
+      }
+
+      async function startRecording() {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setMessage('当前页面无法使用麦克风。请确认浏览器支持 getUserMedia，并检查是否允许本地文件访问。', 'error');
+          return;
+        }
+        button.disabled = true;
+        setMessage('正在请求麦克风权限…');
+        try {
+          const audio = {
+            channelCount: { ideal: 1 },
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          };
+          if (inputDevice.value) audio.deviceId = { exact: inputDevice.value };
+          activeStream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+          audioContext = new AudioContext();
+          await audioContext.resume();
+          const track = activeStream.getAudioTracks()[0];
+          const settings = track?.getSettings?.() || {};
+          activeSampleRate = audioContext.sampleRate;
+          sampleRateLabel.dataset.rate = String(activeSampleRate);
+          sampleRateLabel.textContent = `采样率 ${activeSampleRate} Hz`;
+          if (track?.label) setMessage(`当前输入：${track.label}${settings.sampleRate ? ` · ${settings.sampleRate} Hz` : ''}`);
+          chunks = [];
+          maxPeak = 0;
+          lastRms = 0;
+          source = audioContext.createMediaStreamSource(activeStream);
+          processor = audioContext.createScriptProcessor(4096, 1, 1);
+          processor.onaudioprocess = collectAudio;
+          silentGain = audioContext.createGain();
+          silentGain.gain.value = 0;
+          source.connect(processor);
+          processor.connect(silentGain);
+          silentGain.connect(audioContext.destination);
+          recordingStartedAt = performance.now();
+          setState('recording', '正在录音');
+          title.textContent = '正在采集';
+          subtitle.textContent = '保持声卡连接，录音将在 5 秒后自动停止。';
+          downloadButton.hidden = true;
+          meter.classList.remove('hot');
+          meterTimer = window.setInterval(updateMeter, 80);
+          finishTimer = window.setTimeout(() => stopRecording(true), RECORD_SECONDS * 1000);
+        } catch (error) {
+          await stopRecording(false);
+          setState('idle', '待机');
+          setMessage(describeError(error), 'error');
+        }
+      }
+
+      button.addEventListener('click', startRecording);
+      document.querySelector('#refresh-devices').addEventListener('click', refreshDevices);
+      inputDevice.addEventListener('focus', refreshDevices);
+      downloadButton.addEventListener('click', () => {
+        if (!lastRecording) return;
+        const url = URL.createObjectURL(lastRecording);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'mobile-capture.wav';
+        anchor.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+      navigator.mediaDevices?.addEventListener?.('devicechange', refreshDevices);
+
+      if (!window.isSecureContext) {
+        setMessage('当前不是安全上下文。部分浏览器会禁止麦克风；请用浏览器直接打开本地文件，或改用 HTTPS 页面。', 'error');
+      } else if (!navigator.mediaDevices?.getUserMedia) {
+        setMessage('当前打开方式未开放麦克风 API。请换用支持本地文件录音的移动浏览器。', 'error');
+      }
+    })();
+  </script>
+</body>
+</html>

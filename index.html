@@ -175,6 +175,7 @@
       </div>
       <div class="meter-head"><span>输入电平</span><span id="level-value">峰值 -- dBFS</span></div>
       <div class="meter" role="meter" aria-label="实时音频电平" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
+      <div class="record-footer"><span id="channel-levels">通道电平：--</span><span id="channel-count">输入声道：--</span></div>
       <div class="record-footer"><span id="elapsed">尚无录音</span><span id="sample-rate">采样率 --</span></div>
       <div class="record-footer"><span id="active-device">实际输入：尚未录音</span><span id="requested-device">选择：系统默认</span></div>
       <div class="record-footer" id="device-diagnostics" hidden></div>
@@ -226,6 +227,7 @@
   <script src="js/matcher-core.js"></script>
   <script src="js/mfcc.js"></script>
   <script src="js/audio-preprocess.js"></script>
+  <script src="js/wav-encoder.js"></script>
   <script src="data/audio-assets.js"></script>
   <script>
     (() => {
@@ -239,6 +241,8 @@
       const meter = document.querySelector('#meter-fill');
       const meterTrack = document.querySelector('.meter');
       const levelValue = document.querySelector('#level-value');
+      const channelLevelsLabel = document.querySelector('#channel-levels');
+      const channelCountLabel = document.querySelector('#channel-count');
       const elapsed = document.querySelector('#elapsed');
       const sampleRateLabel = document.querySelector('#sample-rate');
       const activeDeviceLabel = document.querySelector('#active-device');
@@ -262,12 +266,16 @@
       let processor = null;
       let source = null;
       let silentGain = null;
-      let chunks = [];
+      let channelChunks = [];
       let lastRecording = null;
       let recordingStartedAt = 0;
       let finishTimer = 0;
       let meterTimer = 0;
       let maxPeak = 0;
+      let channelPeaks = [];
+      let channelRms = [];
+      let channelEnergySums = [];
+      let channelSampleCounts = [];
       let lastRms = 0;
       let activeSampleRate = 0;
       let refreshingDevices = false;
@@ -433,7 +441,10 @@
           `实际 ID ${shortDeviceId(actualId)}`,
           `约束 ${shortDeviceId(requestedConstraintId)}`,
           `轨道 ${trackLabel || '无名称'}`,
-          `声道 ${settings?.channelCount ?? '--'}`
+          `格式 ${settings?.sampleRate ?? '--'} Hz / ${settings?.channelCount ?? '--'} 声道`,
+          `AEC ${settings?.echoCancellation === false ? '关' : settings?.echoCancellation === true ? '开' : '?'}`,
+          `NS ${settings?.noiseSuppression === false ? '关' : settings?.noiseSuppression === true ? '开' : '?'}`,
+          `AGC ${settings?.autoGainControl === false ? '关' : settings?.autoGainControl === true ? '开' : '?'}`
         ].join(' · ');
       }
 
@@ -489,53 +500,58 @@
         meter.style.width = `${percent}%`;
         meter.classList.toggle('hot', maxPeak > 0.985);
         levelValue.textContent = `峰值 ${(maxPeak > 0 ? 20 * Math.log10(maxPeak) : -100).toFixed(0)} dBFS`;
+        channelLevelsLabel.textContent = `通道电平：${channelRms.map((rms, index) =>
+          `${index === 0 ? 'L' : index === 1 ? 'R' : `CH${index + 1}`} ${(rms > 0 ? 20 * Math.log10(rms) : -100).toFixed(0)} dBFS`
+        ).join(' / ') || '--'}`;
         meterTrack.setAttribute('aria-valuenow', String(Math.round(percent)));
         const secondsLeft = Math.max(0, RECORD_SECONDS - (performance.now() - recordingStartedAt) / 1000);
         elapsed.textContent = `剩余 ${secondsLeft.toFixed(1)} 秒`;
       }
 
       function collectAudio(event) {
-        const input = event.inputBuffer.getChannelData(0);
-        const copy = new Float32Array(input);
-        chunks.push(copy);
-        let sum = 0;
-        let peak = 0;
-        for (let i = 0; i < input.length; i += 1) {
-          const sample = input[i];
-          sum += sample * sample;
-          peak = Math.max(peak, Math.abs(sample));
+        const inputBuffer = event.inputBuffer;
+        const channelCount = inputBuffer.numberOfChannels;
+        while (channelChunks.length < channelCount) {
+          channelChunks.push([]);
+          channelPeaks.push(0);
+          channelRms.push(0);
+          channelEnergySums.push(0);
+          channelSampleCounts.push(0);
         }
-        lastRms = Math.sqrt(sum / input.length);
-        maxPeak = Math.max(maxPeak, peak);
+        for (let channel = 0; channel < channelCount; channel += 1) {
+          const input = inputBuffer.getChannelData(channel);
+          const copy = new Float32Array(input);
+          channelChunks[channel].push(copy);
+          let sum = 0;
+          let peak = 0;
+          for (let index = 0; index < input.length; index += 1) {
+            const sample = input[index];
+            sum += sample * sample;
+            peak = Math.max(peak, Math.abs(sample));
+          }
+          channelEnergySums[channel] += sum;
+          channelSampleCounts[channel] += input.length;
+          channelRms[channel] = Math.sqrt(
+            channelEnergySums[channel] / channelSampleCounts[channel]
+          );
+          channelPeaks[channel] = Math.max(channelPeaks[channel], peak);
+        }
+        lastRms = Math.max(...channelRms);
+        maxPeak = Math.max(...channelPeaks);
+        channelCountLabel.textContent = `输入声道：${channelCount}`;
       }
 
-      function makeWav(parts, sampleRate) {
-        const sampleCount = parts.reduce((total, part) => total + part.length, 0);
-        const buffer = new ArrayBuffer(44 + sampleCount * 2);
-        const view = new DataView(buffer);
-        const writeText = (offset, text) => [...text].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
-        writeText(0, 'RIFF');
-        view.setUint32(4, 36 + sampleCount * 2, true);
-        writeText(8, 'WAVE');
-        writeText(12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
-        view.setUint16(22, 1, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * 2, true);
-        view.setUint16(32, 2, true);
-        view.setUint16(34, 16, true);
-        writeText(36, 'data');
-        view.setUint32(40, sampleCount * 2, true);
-        let offset = 44;
-        for (const part of parts) {
-          for (const sample of part) {
-            const clipped = Math.max(-1, Math.min(1, sample));
-            view.setInt16(offset, clipped < 0 ? clipped * 32768 : clipped * 32767, true);
-            offset += 2;
+      function flattenChannels(channels) {
+        return channels.map(parts => {
+          const sampleCount = parts.reduce((total, part) => total + part.length, 0);
+          const samples = new Float32Array(sampleCount);
+          let offset = 0;
+          for (const part of parts) {
+            samples.set(part, offset);
+            offset += part.length;
           }
-        }
-        return new Blob([buffer], { type: 'audio/wav' });
+          return samples;
+        });
       }
 
       async function stopRecording(success) {
@@ -552,8 +568,9 @@
         activeStream = null;
         if (audioContext && audioContext.state !== 'closed') await audioContext.close().catch(() => {});
         audioContext = null;
-        if (success && chunks.length) {
-          lastRecording = makeWav(chunks, activeSampleRate);
+        if (success && channelChunks.length) {
+          const samplesByChannel = flattenChannels(channelChunks);
+          lastRecording = WavEncoder.encodePcm16Wav(samplesByChannel, activeSampleRate);
           downloadButton.hidden = false;
           elapsed.textContent = `已录制 ${((performance.now() - recordingStartedAt) / 1000).toFixed(1)} 秒`;
           setState('processing', '分析中');
@@ -566,20 +583,14 @@
             setMessage('录音数据接近静音。请检查声卡输出、电缆连接和输入路由。', 'error');
           } else {
             try {
-              const sampleCount = chunks.reduce((total, part) => total + part.length, 0);
-              const samples = new Float32Array(sampleCount);
-              let offset = 0;
-              for (const part of chunks) {
-                samples.set(part, offset);
-                offset += part.length;
-              }
-              const result = runMatcher(samples, activeSampleRate);
+              const selectedChannel = channelRms.indexOf(Math.max(...channelRms));
+              const result = runMatcher(samplesByChannel[selectedChannel], activeSampleRate);
               showMatch(result);
               setState('ready', '识别完成');
               title.textContent = result ? '识别完成' : '无有效事件';
               setMessage(maxPeak > 0.985
                 ? `识别完成；录音峰值 ${ (20 * Math.log10(maxPeak)).toFixed(1) } dBFS，可能存在削波。`
-                : result ? `已匹配 ${result.category}，可播放基准音或调整候选筛选。` : '没有分离出有效声音事件，请重试。',
+                : result ? `已匹配 ${result.category}；识别使用 ${selectedChannel === 0 ? 'L' : selectedChannel === 1 ? 'R' : `CH${selectedChannel + 1}`} 声道。可播放基准音或调整候选筛选。` : '没有分离出有效声音事件，请重试。',
               maxPeak > 0.985 ? 'error' : 'success');
             } catch (error) {
               setState('ready', '分析失败');
@@ -609,7 +620,7 @@
           : '系统默认输入';
         try {
           const audio = {
-            channelCount: { ideal: 1 },
+            channelCount: { ideal: 2 },
             echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false
@@ -646,11 +657,16 @@
           if (track?.label) {
             setMessage(`实际输入：${track.label}${settings.sampleRate ? ` · ${settings.sampleRate} Hz` : ''}`);
           }
-          chunks = [];
+          channelChunks = [];
           maxPeak = 0;
+          channelPeaks = [];
+          channelRms = [];
+          channelEnergySums = [];
+          channelSampleCounts = [];
           lastRms = 0;
           source = audioContext.createMediaStreamSource(activeStream);
-          processor = audioContext.createScriptProcessor(4096, 1, 1);
+          const inputChannels = Math.max(1, Math.min(2, settings.channelCount || 2));
+          processor = audioContext.createScriptProcessor(4096, inputChannels, 1);
           processor.onaudioprocess = collectAudio;
           silentGain = audioContext.createGain();
           silentGain.gain.value = 0;

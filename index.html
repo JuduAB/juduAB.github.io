@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f3f2ed">
-  <title>听声鉴宝 · 移动录音验证</title>
+  <title>听声鉴宝 · 移动端离线识别</title>
   <style>
     :root {
       color-scheme: light;
@@ -123,7 +123,11 @@
     .result-empty { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
     .result-mark { display: grid; flex: 0 0 34px; place-items: center; width: 34px; height: 34px; border: 1px solid #d8c79f; border-radius: 50%; color: var(--gold); font-family: Georgia, serif; font-size: 18px; }
     .filter-head { margin-top: 25px; }
-    .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .result-content { display: flex; align-items: center; gap: 12px; }
+    .result-copy { min-width: 0; flex: 1; }
+    .result-copy strong { display: block; font-family: Georgia, "Noto Serif SC", "Songti SC", serif; font-size: 18px; font-weight: 600; }
+    .result-copy span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
     .filter-field { display: grid; gap: 6px; }
     .filter-field label { color: var(--muted); font-size: 11px; }
     .items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 13px 0 0; padding: 0; list-style: none; }
@@ -146,18 +150,18 @@
   <main class="app">
     <header class="masthead">
       <div class="wordmark">FIELD NOTES · AUDIO</div>
-      <div class="edition">移动端原型 / 01</div>
+      <div class="edition">离线识别 / 移动端</div>
     </header>
 
     <section class="intro" aria-labelledby="page-title">
       <div class="eyebrow">暗区突围无限</div>
       <h1 id="page-title">听声鉴宝</h1>
-      <p>接入外置声卡，录制拾取声。先验证手机浏览器的录音输入与信号质量。</p>
+      <p>接入外置声卡，采集拾取声并在本机识别，按声音类别缩小物品范围。</p>
     </section>
 
     <section class="record-panel" aria-labelledby="record-title">
       <div class="panel-top">
-        <div class="panel-title" id="record-title">输入检查</div>
+        <div class="panel-title" id="record-title">拾取声录音</div>
         <div class="live-state" id="live-state" data-state="idle"><span class="led"></span><span id="state-label">待机</span></div>
       </div>
       <div class="rec-row">
@@ -186,14 +190,22 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>
         导出最近录音 WAV
       </button>
+      <button class="refresh-button" id="play-reference" type="button" hidden style="margin-top:12px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>
+        播放识别类别基准音
+      </button>
     </section>
 
     <div class="section-head">
       <h2>识别结果</h2>
-      <span>离线分类核心尚未接入</span>
+      <span id="match-mode">本地离线匹配</span>
     </div>
     <section class="result" aria-live="polite">
-      <div class="result-empty"><span class="result-mark">—</span><span>录音链路验证完成后，将在此显示声音类别与置信度。</span></div>
+      <div class="result-empty" id="result-empty"><span class="result-mark">—</span><span>录制声音后显示匹配类别与置信度。</span></div>
+      <div class="result-content" id="result-content" hidden>
+        <span class="result-mark">音</span>
+        <div class="result-copy"><strong id="matched-category"></strong><span id="matched-confidence"></span></div>
+      </div>
     </section>
 
     <div class="section-head filter-head">
@@ -201,13 +213,18 @@
       <span id="item-count">等待筛选数据</span>
     </div>
     <div class="filters">
-      <div class="filter-field"><label for="type-filter">物品类别</label><select id="type-filter" disabled><option>筛选数据接入中</option></select></div>
-      <div class="filter-field"><label for="format-filter">占用格式</label><select id="format-filter" disabled><option>筛选数据接入中</option></select></div>
+      <div class="filter-field"><label for="type-filter">物品类别</label><select id="type-filter"><option value="神秘货物">全部类别</option></select></div>
+      <div class="filter-field"><label for="format-filter">占用格式</label><select id="format-filter"><option value="任意格式">任意格式</option></select></div>
+      <div class="filter-field"><label for="sound-filter">声音类别</label><select id="sound-filter"><option value="任意音频">任意音频</option></select></div>
     </div>
-    <ul class="items" id="items"><li class="empty-list">候选物品映射会在下一阶段接入。</li></ul>
-    <p class="bottom-note">本地录音原始数据仅在本页内存处理；使用导出按钮时才会下载 WAV。当前原型不上传音频，也不会给出模拟识别结果。</p>
+    <ul class="items" id="items"><li class="empty-list">正在载入本地物品清单…</li></ul>
+    <p class="bottom-note">录音、特征计算与识别均在当前设备完成。音频不会上传；WAV 仅在点击导出时下载。</p>
   </main>
 
+  <script src="js/matcher-core.js"></script>
+  <script src="js/mfcc.js"></script>
+  <script src="js/audio-preprocess.js"></script>
+  <script src="data/audio-assets.js"></script>
   <script>
     (() => {
       const RECORD_SECONDS = 5;
@@ -224,6 +241,17 @@
       const sampleRateLabel = document.querySelector('#sample-rate');
       const inputDevice = document.querySelector('#input-device');
       const downloadButton = document.querySelector('#download-recording');
+      const playReferenceButton = document.querySelector('#play-reference');
+      const typeFilter = document.querySelector('#type-filter');
+      const formatFilter = document.querySelector('#format-filter');
+      const soundFilter = document.querySelector('#sound-filter');
+      const itemsList = document.querySelector('#items');
+      const itemCount = document.querySelector('#item-count');
+      const resultEmpty = document.querySelector('#result-empty');
+      const resultContent = document.querySelector('#result-content');
+      const matchedCategory = document.querySelector('#matched-category');
+      const matchedConfidence = document.querySelector('#matched-confidence');
+      const matchMode = document.querySelector('#match-mode');
       let activeStream = null;
       let audioContext = null;
       let processor = null;
@@ -237,6 +265,130 @@
       let maxPeak = 0;
       let lastRms = 0;
       let activeSampleRate = 0;
+      let latestCategory = null;
+      let referencePlayer = null;
+      let melBank = null;
+
+      const assets = window.AUDIO_WEB_ASSETS;
+      const mapData = assets?.maps || {};
+      const qualityOrder = { '红': 0, '金': 1, '紫': 2 };
+      const qualityClass = { '红': 'red', '金': 'gold', '紫': 'purple' };
+
+      function decodeBase64Float32(encoded) {
+        const binary = atob(encoded);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        const view = new DataView(bytes.buffer);
+        const values = new Float32Array(bytes.byteLength / 4);
+        for (let index = 0; index < values.length; index += 1) values[index] = view.getFloat32(index * 4, true);
+        return values;
+      }
+
+      function initializeFilters() {
+        const categories = mapData.category_map || {};
+        const formats = mapData.footprint_map || {};
+        for (const category of Object.keys(categories).sort((a, b) => a.localeCompare(b, 'zh-CN'))) {
+          typeFilter.add(new Option(category, category));
+        }
+        for (const format of Object.keys(formats).sort((a, b) => {
+          const [aw, ah] = a.split('x').map(Number);
+          const [bw, bh] = b.split('x').map(Number);
+          return aw * ah - bw * bh || aw - bw;
+        })) formatFilter.add(new Option(format, format));
+        for (const category of Object.keys(mapData.audio_map || {}).sort((a, b) => a.localeCompare(b, 'zh-CN'))) {
+          soundFilter.add(new Option(category, category));
+        }
+        typeFilter.addEventListener('change', renderItems);
+        formatFilter.addEventListener('change', renderItems);
+        soundFilter.addEventListener('change', renderItems);
+        renderItems();
+      }
+
+      function renderItems() {
+        const collections = mapData.collection_map || {};
+        const typeMap = mapData.category_map || {};
+        const formatMap = mapData.footprint_map || {};
+        const soundMap = mapData.audio_map || {};
+        const type = typeFilter.value;
+        const format = formatFilter.value;
+        const sound = soundFilter.value;
+        let names = Object.keys(collections);
+        if (type !== '神秘货物') {
+          const allowed = new Set(typeMap[type] || []);
+          names = names.filter(name => allowed.has(name));
+        }
+        if (format !== '任意格式') {
+          const allowed = new Set(formatMap[format] || []);
+          names = names.filter(name => allowed.has(name));
+        }
+        if (sound !== '任意音频') {
+          const allowed = new Set(soundMap[sound] || []);
+          names = names.filter(name => allowed.has(name));
+        }
+        names.sort((left, right) =>
+          (qualityOrder[collections[left]?.['品质']] ?? 9) - (qualityOrder[collections[right]?.['品质']] ?? 9)
+          || left.localeCompare(right, 'zh-CN')
+        );
+        itemsList.replaceChildren();
+        if (!names.length) {
+          const empty = document.createElement('li');
+          empty.className = 'empty-list';
+          empty.textContent = '当前筛选条件下没有候选物品。';
+          itemsList.append(empty);
+        } else {
+          for (const name of names) {
+            const item = document.createElement('li');
+            item.className = 'item';
+            const label = document.createElement('span');
+            label.textContent = name;
+            const quality = document.createElement('span');
+            const value = collections[name]?.['品质'] || '未知';
+            quality.className = `quality ${qualityClass[value] || ''}`;
+            quality.textContent = value;
+            item.append(label, quality);
+            itemsList.append(item);
+          }
+        }
+        itemCount.textContent = `${names.length} 件候选`;
+      }
+
+      function showMatch(result) {
+        latestCategory = result?.category || null;
+        if (!result) {
+          resultEmpty.hidden = false;
+          resultContent.hidden = true;
+          resultEmpty.lastElementChild.textContent = '未检测到有效声音，请检查输入信号或重试。';
+          soundFilter.value = '任意音频';
+          playReferenceButton.hidden = true;
+          renderItems();
+          return;
+        }
+        matchedCategory.textContent = result.category;
+        matchedConfidence.textContent = `匹配置信度 ${(result.confidence * 100).toFixed(1)}%`;
+        resultEmpty.hidden = true;
+        resultContent.hidden = false;
+        soundFilter.value = result.category;
+        playReferenceButton.hidden = !assets.referenceAudio?.[result.category];
+        renderItems();
+      }
+
+      function runMatcher(samples, sampleRate) {
+        if (!assets || !window.AudioMatchCore || !window.AudioMfcc || !window.AudioPreprocess) {
+          throw new Error('本地识别资源未能加载。请保持 mobile 文件夹结构完整。');
+        }
+        const analysis = AudioPreprocess.analyzePcm(samples, sampleRate, assets.butterworthSos);
+        if (!analysis.selectedEvent) return null;
+        const features = AudioMfcc.melCepstra(analysis.selectedEvent, melBank, assets.mfccOptions);
+        return AudioMatchCore.matchFeatures(features, assets.features, assets.matcherOptions);
+      }
+
+      function playReference() {
+        const reference = assets.referenceAudio?.[latestCategory];
+        if (!reference) return;
+        if (referencePlayer) referencePlayer.pause();
+        referencePlayer = new Audio(`data:${reference.mime};base64,${reference.base64}`);
+        referencePlayer.play().catch(error => setMessage(`参考音播放失败：${error.message}`, 'error'));
+      }
 
       function setMessage(text, kind = '') {
         message.textContent = text;
@@ -353,10 +505,37 @@
           lastRecording = makeWav(chunks, activeSampleRate);
           downloadButton.hidden = false;
           elapsed.textContent = `已录制 ${((performance.now() - recordingStartedAt) / 1000).toFixed(1)} 秒`;
-          setState('ready', '录音完成');
-          title.textContent = '录音已就绪';
+          setState('processing', '分析中');
+          title.textContent = '正在分析';
           subtitle.textContent = `峰值 ${maxPeak > 0 ? (20 * Math.log10(maxPeak)).toFixed(1) : '-∞'} dBFS · 可导出为 WAV`;
-          setMessage(maxPeak < 0.0001 ? '录音数据接近静音。请检查声卡输出、电缆连接和输入路由。' : maxPeak > 0.985 ? '检测到明显削波。请降低外部设备输出音量后重录。' : '已捕获 PCM 音频。可导出 WAV 供后续识别算法对照。', maxPeak < 0.0001 || maxPeak > 0.985 ? 'error' : 'success');
+          if (maxPeak < 0.0001) {
+            showMatch(null);
+            setState('ready', '无有效信号');
+            title.textContent = '未检测到信号';
+            setMessage('录音数据接近静音。请检查声卡输出、电缆连接和输入路由。', 'error');
+          } else {
+            try {
+              const sampleCount = chunks.reduce((total, part) => total + part.length, 0);
+              const samples = new Float32Array(sampleCount);
+              let offset = 0;
+              for (const part of chunks) {
+                samples.set(part, offset);
+                offset += part.length;
+              }
+              const result = runMatcher(samples, activeSampleRate);
+              showMatch(result);
+              setState('ready', '识别完成');
+              title.textContent = result ? '识别完成' : '无有效事件';
+              setMessage(maxPeak > 0.985
+                ? `识别完成；录音峰值 ${ (20 * Math.log10(maxPeak)).toFixed(1) } dBFS，可能存在削波。`
+                : result ? `已匹配 ${result.category}，可播放基准音或调整候选筛选。` : '没有分离出有效声音事件，请重试。',
+              maxPeak > 0.985 ? 'error' : 'success');
+            } catch (error) {
+              setState('ready', '分析失败');
+              title.textContent = '分析失败';
+              setMessage(`识别失败：${error.message}`, 'error');
+            }
+          }
         } else {
           setState('idle', '待机');
           title.textContent = '录制 5 秒';
@@ -417,6 +596,7 @@
       }
 
       button.addEventListener('click', startRecording);
+      playReferenceButton.addEventListener('click', playReference);
       document.querySelector('#refresh-devices').addEventListener('click', refreshDevices);
       inputDevice.addEventListener('focus', refreshDevices);
       downloadButton.addEventListener('click', () => {
@@ -429,6 +609,17 @@
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       });
       navigator.mediaDevices?.addEventListener?.('devicechange', refreshDevices);
+
+      if (assets) {
+        try {
+          melBank = decodeBase64Float32(assets.melBankF32leBase64);
+          initializeFilters();
+        } catch (error) {
+          setMessage(`本地识别数据加载失败：${error.message}`, 'error');
+        }
+      } else {
+        setMessage('未找到本地识别资源。请将 mobile 文件夹作为整体使用。', 'error');
+      }
 
       if (!window.isSecureContext) {
         setMessage('当前不是安全上下文。部分浏览器会禁止麦克风；请用浏览器直接打开本地文件，或改用 HTTPS 页面。', 'error');

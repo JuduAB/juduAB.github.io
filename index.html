@@ -189,6 +189,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg>
         </button>
       </div>
+      <button class="refresh-button" id="authorize-devices" type="button" style="margin-top:10px">
+        授权并重新扫描输入设备
+      </button>
       <button class="download-button" id="download-recording" type="button" hidden style="margin-top:12px">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>
         导出最近录音 WAV
@@ -494,6 +497,36 @@
         }
       }
 
+      async function authorizeAndRefreshDevices() {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setMessage('当前浏览器未开放麦克风 API，无法授权或扫描输入设备。', 'error');
+          return;
+        }
+        const authorizeButton = document.querySelector('#authorize-devices');
+        authorizeButton.disabled = true;
+        setMessage('正在请求麦克风权限，以读取可选输入设备…');
+        let permissionStream = null;
+        try {
+          permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          const permissionTrack = permissionStream.getAudioTracks()[0];
+          const permissionLabel = permissionTrack?.label || '';
+          permissionStream.getTracks().forEach(track => track.stop());
+          permissionStream = null;
+          await refreshDevices();
+          const selectableCount = [...inputDevice.options].filter(option => option.value).length;
+          setMessage(
+            `麦克风权限已授予，扫描到 ${selectableCount} 个可选输入。请在网页下拉框选择声卡后再录音。`
+              + (permissionLabel ? ` 授权弹窗当时使用：${permissionLabel}。` : ''),
+            'success'
+          );
+        } catch (error) {
+          permissionStream?.getTracks().forEach(track => track.stop());
+          setMessage(describeError(error), 'error');
+        } finally {
+          authorizeButton.disabled = false;
+        }
+      }
+
       function updateMeter() {
         const db = lastRms > 0 ? 20 * Math.log10(lastRms) : -100;
         const percent = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
@@ -691,6 +724,7 @@
       button.addEventListener('click', startRecording);
       playReferenceButton.addEventListener('click', playReference);
       document.querySelector('#refresh-devices').addEventListener('click', refreshDevices);
+      document.querySelector('#authorize-devices').addEventListener('click', authorizeAndRefreshDevices);
       inputDevice.addEventListener('change', () => {
         const selected = inputDevice.selectedOptions[0];
         requestedDeviceLabel.textContent = `选择：${selected?.value ? selected.textContent : '系统默认输入'}`;

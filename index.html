@@ -177,6 +177,7 @@
       <div class="meter" role="meter" aria-label="实时音频电平" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
       <div class="record-footer"><span id="elapsed">尚无录音</span><span id="sample-rate">采样率 --</span></div>
       <div class="record-footer"><span id="active-device">实际输入：尚未录音</span><span id="requested-device">选择：系统默认</span></div>
+      <div class="record-footer" id="device-diagnostics" hidden></div>
       <p class="message" id="message" role="status" aria-live="polite">录音需由用户点击启动，并在浏览器允许麦克风访问。</p>
       <div class="device-row">
         <div>
@@ -242,6 +243,7 @@
       const sampleRateLabel = document.querySelector('#sample-rate');
       const activeDeviceLabel = document.querySelector('#active-device');
       const requestedDeviceLabel = document.querySelector('#requested-device');
+      const deviceDiagnostics = document.querySelector('#device-diagnostics');
       const inputDevice = document.querySelector('#input-device');
       const downloadButton = document.querySelector('#download-recording');
       const playReferenceButton = document.querySelector('#play-reference');
@@ -415,6 +417,26 @@
         return descriptions[error.name] || `录音启动失败：${error.message || error.name || '未知错误'}`;
       }
 
+      function shortDeviceId(deviceId) {
+        if (!deviceId) return '浏览器未提供';
+        return `${deviceId.slice(0, 8)}…${deviceId.slice(-4)}`;
+      }
+
+      function setDeviceDiagnostics({ requestedId, actualId, trackLabel, constraints, settings }) {
+        const requestedConstraint = constraints?.deviceId;
+        const requestedConstraintId = typeof requestedConstraint === 'string'
+          ? requestedConstraint
+          : requestedConstraint?.exact || requestedConstraint?.ideal || '';
+        deviceDiagnostics.hidden = false;
+        deviceDiagnostics.textContent = [
+          `请求 ID ${shortDeviceId(requestedId)}`,
+          `实际 ID ${shortDeviceId(actualId)}`,
+          `约束 ${shortDeviceId(requestedConstraintId)}`,
+          `轨道 ${trackLabel || '无名称'}`,
+          `声道 ${settings?.channelCount ?? '--'}`
+        ].join(' · ');
+      }
+
       async function refreshDevices() {
         if (refreshingDevices) return;
         if (!navigator.mediaDevices?.enumerateDevices) {
@@ -423,23 +445,30 @@
         }
         refreshingDevices = true;
         const selectedId = inputDevice.value;
+        const selectedLabel = inputDevice.selectedOptions[0]?.textContent || '所选输入设备';
         const refreshButton = document.querySelector('#refresh-devices');
         refreshButton.disabled = true;
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
           const inputs = devices.filter(device => device.kind === 'audioinput');
+          const selectableInputs = inputs.filter(device => device.deviceId);
           inputDevice.replaceChildren(new Option('系统默认输入', ''));
-          for (const [index, device] of inputs.entries()) {
+          for (const [index, device] of selectableInputs.entries()) {
             const label = device.label || `录音输入 ${index + 1}`;
             inputDevice.add(new Option(label, device.deviceId));
           }
-          const selectedStillExists = selectedId && inputs.some(device => device.deviceId === selectedId);
+          const selectedStillExists = selectedId && selectableInputs.some(device => device.deviceId === selectedId);
           if (selectedStillExists) {
             inputDevice.value = selectedId;
           } else if (selectedId) {
-            inputDevice.value = '';
+            const unavailableOption = new Option(`${selectedLabel.replace('（已断开）', '')}（已断开）`, selectedId);
+            unavailableOption.disabled = true;
+            inputDevice.add(unavailableOption);
+            inputDevice.value = selectedId;
             requestedDeviceLabel.textContent = '选择：设备已断开';
-            setMessage('已选录音设备不在设备列表中，未自动切换。请重新连接后刷新并选择。', 'error');
+            setMessage('已选录音设备当前不可用，选择已保留且不会改用默认输入。请重新连接设备，或手动选择其他输入。', 'error');
+          } else if (!selectableInputs.length && inputs.length) {
+            setMessage('浏览器尚未提供可选设备 ID。先通过系统权限完成麦克风授权，再刷新设备列表。', 'error');
           } else if (!inputs.length) {
             setMessage('暂未列出录音设备；先允许麦克风权限，再刷新设备列表。');
           }
@@ -589,17 +618,26 @@
           activeStream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
           const track = activeStream.getAudioTracks()[0];
           const settings = track?.getSettings?.() || {};
-          if (requestedDeviceId && settings.deviceId && settings.deviceId !== requestedDeviceId) {
-            throw new Error(`浏览器返回的输入与选择不符（选择：${requestedDeviceName}）。已停止录音，请刷新设备列表后重试。`);
-          }
-          const actualDeviceName = track?.label || (settings.deviceId
+          const constraints = track?.getConstraints?.() || {};
+          const actualDeviceId = settings.deviceId || '';
+          setDeviceDiagnostics({
+            requestedId: requestedDeviceId,
+            actualId: actualDeviceId,
+            trackLabel: track?.label,
+            constraints,
+            settings
+          });
+          const actualDeviceName = track?.label || (actualDeviceId
             ? '浏览器已按指定设备打开'
             : '浏览器未提供实际设备标识');
           activeDeviceLabel.textContent = `实际输入：${actualDeviceName}`;
-          requestedDeviceLabel.textContent = `选择：${requestedDeviceName}`;
-          if (requestedDeviceId && !settings.deviceId) {
-            setMessage(`已请求使用「${requestedDeviceName}」；浏览器未公开实际设备 ID，将按精确设备约束录制。`);
+          if (requestedDeviceId && actualDeviceId !== requestedDeviceId) {
+            throw new Error(
+              `所选输入「${requestedDeviceName}」未被实际使用。请求 ID ${shortDeviceId(requestedDeviceId)}，`
+              + `实际 ID ${shortDeviceId(actualDeviceId)}；已停止录音。请重新连接声卡、允许麦克风权限后刷新设备。`
+            );
           }
+          requestedDeviceLabel.textContent = `选择：${requestedDeviceName}`;
           audioContext = new AudioContext();
           await audioContext.resume();
           activeSampleRate = audioContext.sampleRate;

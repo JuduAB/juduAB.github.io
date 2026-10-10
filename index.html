@@ -176,6 +176,7 @@
       <div class="meter-head"><span>输入电平</span><span id="level-value">峰值 -- dBFS</span></div>
       <div class="meter" role="meter" aria-label="实时音频电平" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
       <div class="record-footer"><span id="elapsed">尚无录音</span><span id="sample-rate">采样率 --</span></div>
+      <div class="record-footer"><span id="active-device">实际输入：尚未录音</span><span id="requested-device">选择：系统默认</span></div>
       <p class="message" id="message" role="status" aria-live="polite">录音需由用户点击启动，并在浏览器允许麦克风访问。</p>
       <div class="device-row">
         <div>
@@ -239,6 +240,8 @@
       const levelValue = document.querySelector('#level-value');
       const elapsed = document.querySelector('#elapsed');
       const sampleRateLabel = document.querySelector('#sample-rate');
+      const activeDeviceLabel = document.querySelector('#active-device');
+      const requestedDeviceLabel = document.querySelector('#requested-device');
       const inputDevice = document.querySelector('#input-device');
       const downloadButton = document.querySelector('#download-recording');
       const playReferenceButton = document.querySelector('#play-reference');
@@ -265,6 +268,7 @@
       let maxPeak = 0;
       let lastRms = 0;
       let activeSampleRate = 0;
+      let refreshingDevices = false;
       let latestCategory = null;
       let referencePlayer = null;
       let melBank = null;
@@ -412,23 +416,41 @@
       }
 
       async function refreshDevices() {
+        if (refreshingDevices) return;
         if (!navigator.mediaDevices?.enumerateDevices) {
           setMessage('此浏览器未提供媒体设备 API。', 'error');
           return;
         }
+        refreshingDevices = true;
+        const selectedId = inputDevice.value;
+        const refreshButton = document.querySelector('#refresh-devices');
+        refreshButton.disabled = true;
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
-          const current = inputDevice.value;
           const inputs = devices.filter(device => device.kind === 'audioinput');
           inputDevice.replaceChildren(new Option('系统默认输入', ''));
           for (const [index, device] of inputs.entries()) {
             const label = device.label || `录音输入 ${index + 1}`;
             inputDevice.add(new Option(label, device.deviceId));
           }
-          if ([...inputDevice.options].some(option => option.value === current)) inputDevice.value = current;
-          if (!inputs.length) setMessage('暂未列出录音设备；首次授权麦克风后再刷新。');
+          const selectedStillExists = selectedId && inputs.some(device => device.deviceId === selectedId);
+          if (selectedStillExists) {
+            inputDevice.value = selectedId;
+          } else if (selectedId) {
+            inputDevice.value = '';
+            requestedDeviceLabel.textContent = '选择：设备已断开';
+            setMessage('已选录音设备不在设备列表中，未自动切换。请重新连接后刷新并选择。', 'error');
+          } else if (!inputs.length) {
+            setMessage('暂未列出录音设备；先允许麦克风权限，再刷新设备列表。');
+          }
+          if (inputDevice.value && selectedStillExists) {
+            requestedDeviceLabel.textContent = `选择：${inputDevice.selectedOptions[0]?.textContent || '指定设备'}`;
+          }
         } catch (error) {
           setMessage(describeError(error), 'error');
+        } finally {
+          refreshButton.disabled = false;
+          refreshingDevices = false;
         }
       }
 
@@ -552,6 +574,10 @@
         }
         button.disabled = true;
         setMessage('正在请求麦克风权限…');
+        const requestedDeviceId = inputDevice.value;
+        const requestedDeviceName = requestedDeviceId
+          ? inputDevice.selectedOptions[0]?.textContent || '指定输入设备'
+          : '系统默认输入';
         try {
           const audio = {
             channelCount: { ideal: 1 },
@@ -559,16 +585,29 @@
             noiseSuppression: false,
             autoGainControl: false
           };
-          if (inputDevice.value) audio.deviceId = { exact: inputDevice.value };
+          if (requestedDeviceId) audio.deviceId = { exact: requestedDeviceId };
           activeStream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
-          audioContext = new AudioContext();
-          await audioContext.resume();
           const track = activeStream.getAudioTracks()[0];
           const settings = track?.getSettings?.() || {};
+          if (requestedDeviceId && settings.deviceId && settings.deviceId !== requestedDeviceId) {
+            throw new Error(`浏览器返回的输入与选择不符（选择：${requestedDeviceName}）。已停止录音，请刷新设备列表后重试。`);
+          }
+          const actualDeviceName = track?.label || (settings.deviceId
+            ? '浏览器已按指定设备打开'
+            : '浏览器未提供实际设备标识');
+          activeDeviceLabel.textContent = `实际输入：${actualDeviceName}`;
+          requestedDeviceLabel.textContent = `选择：${requestedDeviceName}`;
+          if (requestedDeviceId && !settings.deviceId) {
+            setMessage(`已请求使用「${requestedDeviceName}」；浏览器未公开实际设备 ID，将按精确设备约束录制。`);
+          }
+          audioContext = new AudioContext();
+          await audioContext.resume();
           activeSampleRate = audioContext.sampleRate;
           sampleRateLabel.dataset.rate = String(activeSampleRate);
           sampleRateLabel.textContent = `采样率 ${activeSampleRate} Hz`;
-          if (track?.label) setMessage(`当前输入：${track.label}${settings.sampleRate ? ` · ${settings.sampleRate} Hz` : ''}`);
+          if (track?.label) {
+            setMessage(`实际输入：${track.label}${settings.sampleRate ? ` · ${settings.sampleRate} Hz` : ''}`);
+          }
           chunks = [];
           maxPeak = 0;
           lastRms = 0;
@@ -598,7 +637,10 @@
       button.addEventListener('click', startRecording);
       playReferenceButton.addEventListener('click', playReference);
       document.querySelector('#refresh-devices').addEventListener('click', refreshDevices);
-      inputDevice.addEventListener('focus', refreshDevices);
+      inputDevice.addEventListener('change', () => {
+        const selected = inputDevice.selectedOptions[0];
+        requestedDeviceLabel.textContent = `选择：${selected?.value ? selected.textContent : '系统默认输入'}`;
+      });
       downloadButton.addEventListener('click', () => {
         if (!lastRecording) return;
         const url = URL.createObjectURL(lastRecording);
@@ -620,6 +662,8 @@
       } else {
         setMessage('未找到本地识别资源。请将 mobile 文件夹作为整体使用。', 'error');
       }
+
+      refreshDevices();
 
       if (!window.isSecureContext) {
         setMessage('当前不是安全上下文。部分浏览器会禁止麦克风；请用浏览器直接打开本地文件，或改用 HTTPS 页面。', 'error');
